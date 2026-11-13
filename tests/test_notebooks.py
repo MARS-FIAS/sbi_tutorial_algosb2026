@@ -71,6 +71,8 @@ def test_student_notebook_runs_and_leaves_the_challenges_open(name):
 @pytest.mark.parametrize("name", NAMES)
 def test_solutions_notebook_passes_every_check(name):
     _, notebook = build_notebooks.build(name, "solution", write=False)
+    for cell in notebook.cells:  # two bonus answers train for minutes: skipped here, run by the build
+        cell.source = cell.source.replace("RUN_SLOW_BONUS = True", "RUN_SLOW_BONUS = False")
     build_notebooks.execute(notebook, ROOT / "solutions")
     text = printed(notebook)
     print()
@@ -78,4 +80,6 @@ def test_solutions_notebook_passes_every_check(name):
     assert "Traceback" not in text
     scorecard = [line for line in text.splitlines() if "checks passed." in line][-1]
     passed, total = (int(n) for n in scorecard.replace(" checks passed.", "").split(" of "))
-    assert passed == total and total >= 5, scorecard
+    assert passed == total and total >= 4, scorecard
+    bonus = [line for line in text.splitlines() if "· Bonus ·" in line]
+    assert len(bonus) >= 2 and all("✅ PASS" in line for line in bonus), bonus

@@ -52,10 +52,17 @@ def _load(name):
 
 def _load_pickle(name):
     """Load a pickled sbi posterior from data/ (written with the pinned sbi version)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        with open(DATA_DIR / name, "rb") as f:
-            return pickle.load(f)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with open(DATA_DIR / name, "rb") as f:
+                return pickle.load(f)
+    except Exception as err:  # noqa: BLE001 - pickles break when library versions differ
+        raise RuntimeError(
+            f"Could not load the pre-trained network data/{name}. It was saved with other "
+            "versions of sbi or PyTorch than the ones installed here. Tell an instructor; "
+            "the fix is to run the scripts in reference/ in this environment."
+        ) from err
 
 
 def _report(key, passed, message):
@@ -323,7 +330,10 @@ class BlackBox:
 
         if x is None:
             raise ValueError("Give the observation: black_box.sample((1000,), x=x_o)")
-        x = _as_tensor(x, "x").reshape(1, 2)
+        x = _as_tensor(x, "x")
+        if x.numel() != 2:
+            raise ValueError(f"Give one observation of shape (2,) at a time, got shape {tuple(x.shape)}.")
+        x = x.reshape(1, 2)
         num_samples = int(np.prod(sample_shape))
         logging.disable(logging.WARNING)
         try:
@@ -405,10 +415,18 @@ def check_iid(n_values, widths, n_needed, key="Part 5 · pin θ down"):
     b = load_benchmarks()["toy"]
     x_iid = load_toy_observations()
     n_values = [int(n) for n in np.asarray(n_values).reshape(-1)]
-    widths = _as_tensor(widths, "widths").reshape(len(n_values), -1)
+    widths = _as_tensor(widths, "widths")
+    if widths.numel() not in (len(n_values), 2 * len(n_values)):
+        _report(key, False, f"give one width per n: {len(n_values)} values of n, "
+                            f"but {widths.numel()} widths")
+        return
+    widths = widths.reshape(len(n_values), -1)
     enough = len(set(n_values)) >= 5 and min(n_values) >= 1 and max(n_values) <= len(x_iid)
     if not enough:
         _report(key, False, "use at least five different n between 1 and 100")
+        return
+    if not isinstance(n_needed, (int, float, np.integer, np.floating)):
+        _report(key, False, "set n_needed to the number of observations you read off your plot")
         return
     exact = torch.stack([ExactPosterior(x_iid[:n]).width(0.9) for n in n_values])
     error = (widths / exact[:, : widths.shape[1]] - 1).abs()

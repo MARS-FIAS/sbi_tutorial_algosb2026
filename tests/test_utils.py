@@ -213,3 +213,19 @@ def test_fallback_posteriors_load_and_sample():
     assert samples.shape == (300, 2)
     networks = tu.load_three_networks()
     assert sorted(networks) == ["A", "B", "C"]
+
+
+# ---------------------------------------------------------------- awkward input
+def test_check_iid_explains_malformed_input(capsys):
+    tu.check_iid([1, 2, 5, 10, 25, 50, 100], [1.0, 0.9, 0.5], 25)  # three widths for seven n
+    assert not tu.RESULTS["Part 5 · pin θ down"]
+    assert "one width per n" in capsys.readouterr().out
+    tu.check_iid([1, 2, 5, 10, 25], [1.6, 1.2, 0.74, 0.52, 0.33], None)  # no reading of n yet
+    assert not tu.RESULTS["Part 5 · pin θ down"]
+    assert "n_needed" in capsys.readouterr().out
+
+
+def test_black_box_takes_one_observation_at_a_time():
+    box = tu.load_black_box()
+    with pytest.raises(ValueError, match="one observation"):
+        box.sample((10,), x=torch.zeros(5, 2))

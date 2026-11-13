@@ -45,10 +45,10 @@ Everything below is for whoever maintains or teaches the tutorial.
 
 ```bash
 python reference/build_notebooks.py                    # the four notebooks, without outputs
-python reference/build_notebooks.py --run-solutions    # also execute the two solutions notebooks (5 minutes)
+python reference/build_notebooks.py --run-solutions    # also execute the two solutions notebooks (12 minutes)
 ```
 
-The student notebooks ship without outputs. The solutions notebooks ship executed.
+The student notebooks ship without outputs. The solutions notebooks ship executed. Two bonus answers train for several minutes each; they sit behind `RUN_SLOW_BONUS = True` in the solutions notebooks, and the tests switch them off.
 
 **The data are generated.** Two scripts simulate the data in `data/`, train the networks that are handed to the students, and measure the benchmark targets. Each fixes its seeds and ends on a printed check of our reference solution against every benchmark.
 

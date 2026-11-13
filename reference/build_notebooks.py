@@ -116,26 +116,22 @@ def execute(notebook, working_directory):
 
 
 def tidy_outputs(notebook):
-    """Make the saved outputs readable: keep the last state of every progress line."""
+    """Make the saved outputs readable: keep only the last state of every progress line."""
     for cell in notebook.cells:
-        outputs = []
-        for output in cell.get("outputs", []):
-            if output.output_type == "stream":
-                lines = [line.split("\r")[-1] for line in output.text.split("\n")]
-                output.text = "\n".join(lines)
-                if outputs and outputs[-1].output_type == "stream" and outputs[-1].name == output.name:
-                    outputs[-1].text += output.text  # merge consecutive chunks of one stream
-                    continue
-            outputs.append(output)
-        for output in outputs:
-            if output.output_type == "stream":
-                lines = [line.split("\r")[-1] for line in output.text.split("\n")]
-                # sbi prints one line per epoch on a carriage return: keep the last one
-                lines = [l for i, l in enumerate(lines)
-                         if not (l.startswith(" Training neural network.") and i + 1 < len(lines))]
-                output.text = "\n".join(lines)
-        if "outputs" in cell:
-            cell["outputs"] = [o for o in outputs if not (o.output_type == "stream" and not o.text.strip())]
+        if "outputs" not in cell:
+            continue
+        merged = []
+        for output in cell["outputs"]:
+            same_stream = (output.output_type == "stream" and merged
+                           and merged[-1].output_type == "stream" and merged[-1].name == output.name)
+            if same_stream:
+                merged[-1].text += output.text  # a stream arrives in chunks: put them back together
+            else:
+                merged.append(output)
+        for output in merged:
+            if output.output_type == "stream":  # "\r" rewinds the line: what follows overwrites it
+                output.text = "\n".join(line.split("\r")[-1] for line in output.text.split("\n"))
+        cell["outputs"] = [o for o in merged if not (o.output_type == "stream" and not o.text.strip())]
         cell.get("metadata", {}).pop("execution", None)  # run times would change the file on every build
     return notebook
 

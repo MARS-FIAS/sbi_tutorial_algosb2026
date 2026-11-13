@@ -500,7 +500,7 @@ plot_posteriors([samples_nle, ExactPosterior(x_iid[:n]).sample((1000,))],
 #
 # **Passes when** the plot covers at least five values of n between 1 and 100, your widths stay within 25% of the answer key's, and your reading of n is right. For each n use the first n points, `x_iid[:n]`.
 #
-# If your widths drift away from the answer key, improve the NLE training until they pass. (Short on time? `theta, x = tu.load_toy_training_set()` hands you 10,000 simulated pairs.)
+# If your widths drift away from the answer key, improve the NLE training until they pass. (Short on time? `theta, x = tu.load_toy_training_set()` hands you 10,000 simulated pairs, and `posterior_nle = tu.load_toy_nle()` an NLE posterior trained on them.)
 
 # %% tags=["student"]
 # Your loop and your plot
@@ -674,6 +674,68 @@ tu.check_repair(samples_far, num_simulations_far, x_far, low=low, high=high)
 
 # check_iid(n_values, widths_npe, n_needed)
 
+# %% tags=["solution"]
+from sbi.neural_nets.embedding_nets import FCEmbedding, PermutationInvariantEmbedding
+
+RUN_SLOW_BONUS = True        # about 4 minutes on two CPU cores; set to False to skip
+
+if RUN_SLOW_BONUS:
+    # 3. Training set: one simulation is now a SET of points, between 1 and 50 of them.
+    #    Sets of different size are padded with NaN to the common shape (50, 2).
+    max_n, num_sets = 50, 20_000
+    theta_sets = prior.sample((num_sets,))
+    x_sets = simulator(theta_sets[:, None, :].repeat(1, max_n, 1))                      # shape (20000, 50, 2)
+    set_sizes = torch.exp(torch.rand(num_sets) * np.log(max_n)).round().long().clamp(1, max_n)
+    x_sets[torch.arange(max_n)[None] >= set_sizes[:, None]] = float("nan")              # small sets as often as large ones
+
+    # 4. Training: an embedding net reads every point, sums over the set, and hands the sum
+    #    and the size of the set to the flow. The order of the points cannot matter.
+    single_point_net = FCEmbedding(input_dim=2, num_hiddens=40, num_layers=2, output_dim=10)
+    embedding_net = PermutationInvariantEmbedding(single_point_net, trial_net_output_dim=10,
+                                                  num_layers=2, num_hiddens=40, output_dim=10)
+    density_estimator = posterior_nn("maf", embedding_net=embedding_net, z_score_x="none")
+    inference = NPE(prior=prior, density_estimator=density_estimator)
+    # sbi warns here that the NaNs will break the training. They will not: the embedding net masks them.
+    inference.append_simulations(theta_sets, x_sets, exclude_invalid_x=False)
+    estimator = inference.train(stop_after_epochs=30)
+
+# %% tags=["solution"]
+if RUN_SLOW_BONUS:
+    # 5. Inference. posterior.sample() refuses an observation that contains NaN,
+    #    so the padded observation goes to the trained flow directly.
+    n_values_npe = [1, 2, 5, 10, 25]
+    widths_npe = []
+    for n in n_values_npe:
+        x_padded = torch.full((1, max_n, 2), float("nan"))
+        x_padded[0, :n] = x_iid[:n]
+        with torch.no_grad():
+            samples_n = estimator.sample((2000,), condition=x_padded).squeeze(1)
+        widths_npe.append(interval_width(samples_n)[0])
+
+    fig, ax = plt.subplots(figsize=(6, 3.8))
+    ax.plot(n_values, exact_widths, "-", lw=2, color=tu.C_KEY, label="answer key")
+    ax.plot(n_values_npe, widths_npe, "o", ms=8, color=tu.C_YOURS, label="NPE on sets of points")
+    ax.axhline(target_width, color=tu.C_MUTED, ls="--", lw=1)
+    ax.set(xscale="log", yscale="log", xlabel="number of observations n",
+           ylabel="width of the 90% interval of θ₁")
+    ax.set_xticks([1, 10, 100], labels=["1", "10", "100"])
+    ax.set_yticks([0.2, 0.5, 1, 2], labels=["0.2", "0.5", "1", "2"])
+    ax.minorticks_off()
+    ax.legend()
+
+    check_iid(n_values_npe, widths_npe, n_needed, key="Bonus · NPE on sets")
+
+# %% [markdown] tags=["solution"]
+# **Why it works, and where it stops.** The embedding net turns a set of points into a fixed-size summary that does not depend on their order, so one NPE network can take 1 point or 25. For the benchmark that is enough: the widths for n up to 25 come out within 10% of the answer key, and n = 25 can be read off.
+#
+# It took some care to get there, and the care is the lesson.
+#
+# - *Twenty times the simulated points of Part 5.* NLE learned the likelihood of one point from 10,000 points. Here 20,000 sets hold about 250,000 points, and it takes four minutes to train instead of ten seconds.
+# - *Train beyond the range you need.* A network trained on sets of up to 25 points was 20% to 100% too wide at n = 25, the edge of what it had seen. Trained on up to 50, it is fine at 25.
+# - *It does not reach n = 100.* Trained on sets of up to 100 points, the same network was 30% too wide at n = 50 and 80% too wide at n = 100. Three times the simulations, with a mixture density network in place of the flow, did no better. At n = 100 the posterior is 200 times narrower than the prior, and NPE has to learn that sharpness from examples. NLE gets it for free: it adds log-likelihoods.
+#
+# So NPE on sets is the right tool when the number of observations is small or fixed and you want posteriors without MCMC. When it varies over orders of magnitude, learn the likelihood of one observation instead.
+
 # %% [markdown]
 # ### Bonus 4 · NLE against NRE
 #
@@ -698,6 +760,7 @@ posterior_nre = inference.build_posterior(
     mcmc_parameters=dict(num_chains=20, thin=1, warmup_steps=20),
 )
 
+# %% tags=["solution"]
 widths_nre = []
 for n in n_values:
     samples_n = posterior_nre.sample((1000,), x=x_iid[:n], show_progress_bars=False)
@@ -715,3 +778,8 @@ ax.minorticks_off()
 ax.legend()
 
 check_iid(n_values, widths_nre, n_needed, key="Bonus · NRE")
+
+# %% [markdown] tags=["solution"]
+# **What to see.** NRE passes the same benchmark on the same 10,000 pairs: its widths stay within 10 to 20% of the answer key. It gets there by another route. Instead of a density estimator it trains a classifier: is this pair (θ, x) a matching pair, or were θ and x shuffled? The output of the classifier is the likelihood ratio, and ratios of independent observations multiply just like likelihoods.
+#
+# One thing the benchmark does not test is the centre of the posterior. In three runs of ours, the NRE posterior at n = 100 sat up to 2.5 of its own standard deviations away from the centre of the answer key, and the offset grew with n. That is the price named in Part 5: a small error in what the network learned about one observation is added up a hundred times. The more observations you combine, the more carefully the single-observation network has to be trained and checked.

@@ -212,9 +212,9 @@ check_practice(tries)
 #
 # - *The histogram* (right panel) is the Boltzmann distribution $e^{-G_0(x)}$. It depends on the barrier height and not on $D$: narrower wells and a deeper dip at $x = 0$ mean a higher barrier.
 # - *The short-time roughness* (middle panel) depends mostly on $D$: a larger $D$ makes larger jumps from frame to frame.
-# - *The number of hops* (left panel) depends on both: the hop rate is proportional to $D\,e^{-\Delta G^{\ddagger}}$.
+# - *The number of hops* (left panel) depends on both: the hop rate is proportional to $D\,\Delta G^{\ddagger}e^{-\Delta G^{\ddagger}}$ (Kramers' formula for this potential).
 #
-# So the hop count alone cannot separate the two parameters. One more $k_BT$ of barrier and a 2.7 times larger $D$ give the same hop rate. The histogram breaks the tie.
+# So the hop count alone cannot separate the two parameters. One more $k_BT$ of barrier and a $D$ about twice as large give the same hop rate. The histogram breaks the tie.
 #
 # By eye this takes a handful of tries; with two numbers read off the trajectory it takes two. The roughness is the better guide to $D$ than the hop count: a trajectory has 5,000 displacements but only a dozen hops, so the hop count of a single trajectory is uncertain by about its square root. The correction of try 2 is still a little too small, because within one frame the particle already feels the walls of its well. A third try would close the gap. Part 4 comes back to this.
 #
@@ -418,7 +418,7 @@ _, score_noise = train_and_score(summary_with_noise, theta, x)
 print(f"\nreference statistics: {score:.2f}    with ten noise columns: {score_noise:.2f}")
 
 # %% [markdown] tags=["solution"]
-# 1. **Which statistics moved the score most?** From the baseline (−1.3) the static group lifts the score to about 0.7 and the dynamic group to about 2.9; together they reach about 3.5. The dynamic statistics move it most, because they are the only ones that know $D$, and through the hop count they know the barrier too. The static ones then sharpen the barrier height by another factor of two.
+# 1. **Which statistics moved the score most?** From the baseline (about −1.2) the static group lifts the score to about 0.7 and the dynamic group to about 2.9; together they reach about 3.5. The dynamic statistics move it most, because they are the only ones that know $D$, and through the hop count they know the barrier too. The static ones then sharpen the barrier height by another factor of two.
 # 2. **Does adding statistics always help?** No. Noise columns carry no information, and the network has to learn to ignore them from 2,000 examples. The score drops. Every statistic costs training data; it has to pay for itself with information.
 # 3. **Same score, different statistics?** Then the two sets carry the same information about the parameters. Many different summaries are equally good: what matters is not the list, but what it preserves. In the limit, a set of statistics that preserves everything the data say about θ is called *sufficient*.
 #
@@ -456,7 +456,7 @@ check_blind(samples)
 # **Why it works.** The reference statistics pin both parameters: the 90% region covers well under 1% of the prior area and contains the truth. The check has two halves on purpose.
 #
 # - *Small alone is easy.* Train too long on too few simulations, or use too many statistics, and the posterior gets narrow and confidently wrong.
-# - *Containing the truth alone is easy too.* The prior contains the truth. So does the static-only posterior of Part 2, which covers about 10% of the prior area and fails the 5% target.
+# - *Containing the truth alone is easy too.* The prior contains the truth. So does the static-only posterior of Part 2, which covers about 7% of the prior area and fails the 5% target.
 #
 # One caveat for the discussion: a calibrated 90% region misses the truth for one trajectory in ten. A single hit proves little; the coverage check of Notebook 1 is the real test. The score of Part 2 is the average of this check over 200 trajectories.
 
@@ -517,8 +517,8 @@ print("dynamic statistics, frames shuffled in time:\n", summary_dynamic(shuffled
 #
 # Two details for the discussion.
 #
-# - *Use $|x|$, not $x$.* The plain standard deviation of $x$ looks static but is not: at a barrier of 6 $k_BT$ it falls from 0.89 to 0.44 as $D$ goes from 1 to 0.1, because a slow particle stays in the well it started in. That leaks $D$ into a statistic of the histogram. The mean and standard deviation of $x$ also pin the barrier poorly, which is why the starting cell fails on the $\Delta G^{\ddagger}$ target.
-# - *"Nothing about D" is only almost true for a finite trajectory.* A slow particle collects fewer independent samples, so its histogram is noisier. With several static statistics the network can see how noisy the histogram is, and from that it learns a little about $D$: the interval shrinks to about 93% of the prior's. With a single static statistic it stays at 99%. That is why the target is 85% and not 100%.
+# - *Use $|x|$, not $x$.* The plain standard deviation of $x$ looks static but is not: at a barrier of 6 $k_BT$ it falls from 0.90 to 0.43 as $D$ goes from 1 to 0.1, because a slow particle stays in the well it started in. That leaks $D$ into a statistic of the histogram. The mean and standard deviation of $x$ also pin the barrier poorly, which is why the starting cell fails on the $\Delta G^{\ddagger}$ target.
+# - *"Nothing about D" is only almost true for a finite trajectory.* A slow particle collects fewer independent samples, so its histogram is noisier. With several static statistics the network can see how noisy the histogram is, and from that it learns a little about $D$: the interval shrinks to about 94% of the prior's. With a single static statistic it stays at 99%. That is why the target is 85% and not 100%.
 
 # %% tags=["solution"]
 # The reverse: statistics that give D and nothing about the barrier height?
@@ -709,7 +709,42 @@ print(f"ensemble of five: {score_ensemble:.2f}")
 #
 # Let a network invent the statistics. `CNNEmbedding` in `sbi.neural_nets.embedding_nets` is a 1D convolutional network that takes the raw trajectory and returns a summary vector; `posterior_nn(model="nsf", embedding_net=...)` puts it in front of the density estimator, and the two are trained together.
 #
-# Beat your own score with a learned embedding. This one is open-ended: it takes more simulations than you have had so far, and a GPU helps (`NPE(prior, density_estimator=..., device="cuda")`).
+# Beat your own score with a learned embedding. This one is open-ended and hard: with 2,000 simulations a CNN stays far below good hand-made statistics, so simulate more. Training takes minutes, not seconds.
 
 # %% tags=["student"]
 # Your embedding network
+
+# %% tags=["solution"]
+from sbi.neural_nets import posterior_nn
+from sbi.neural_nets.embedding_nets import CNNEmbedding
+
+RUN_SLOW_BONUS = True        # about 4 minutes on two CPU cores; set to False to skip
+
+def cnn_estimator():
+    """Four convolution layers shrink the 5,000 frames to a few hundred numbers, two dense layers to 16."""
+    embedding_net = CNNEmbedding(input_shape=(5000,), num_conv_layers=4, out_channels_per_layer=[8, 16, 32, 32],
+                                 kernel_size=7, pool_kernel_size=4, num_linear_units=64, output_dim=16)
+    return posterior_nn("nsf", num_transforms=2, embedding_net=embedding_net, z_score_x="none")
+
+def raw_trajectory(x):
+    return x           # no statistics: the network sees all 5,000 frames
+
+if RUN_SLOW_BONUS:
+    posterior_cnn, score_cnn = train_and_score(raw_trajectory, theta, x, density_estimator=cnn_estimator())
+
+# %% [markdown] tags=["solution"]
+# **What we found.** The cell above trains the deeper CNN on the 2,000 simulations of this notebook. The other rows are from our own runs.
+#
+# | Summaries | Simulations | Score |
+# | --- | --- | --- |
+# | sbi's default `CNNEmbedding` (two convolution layers) | 2,000 | 0.4 to 0.9 |
+# | the deeper CNN above | 2,000 | 1.5 to 1.9 |
+# | the deeper CNN above | 10,000 | 3.1 |
+# | our eight hand-made statistics | 2,000 | 3.5 |
+# | our eight hand-made statistics | 10,000 | 3.75 |
+#
+# We did not beat the hand-made statistics with a CNN. With 2,000 simulations it is not close, and with five times as many it is still behind what eight numbers achieve with 2,000. The 10,000-simulation run took ten minutes on four CPU cores.
+#
+# **Why.** The CNN has to discover from examples what you put in by hand: that the sign of $x$ does not matter, that wells have a width, that hops can be counted, that displacements at short lags measure $D$. Each of these is a few lines of NumPy and thousands of simulations to learn. Hand-made statistics are prior knowledge about the physics, and prior knowledge is worth simulations.
+#
+# Learned summaries win where that knowledge runs out: when nobody knows which features of the data matter, or when the features are too many and too subtle to write down. They also remove the risk of Part 4, where a badly chosen set of statistics silently made the posterior blind to a parameter. The usual practice is to start with statistics you understand, and move to a learned embedding once simulations are cheap enough to pay for it.
