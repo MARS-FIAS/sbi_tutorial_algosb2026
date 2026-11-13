@@ -1,0 +1,26 @@
+{
+  "toy": {
+    "best_radius": 0.1,
+    "far_distance": 1.0,
+    "region_level": 0.95,
+    "c2st_max": 0.6,
+    "wall_tolerance": 0.3,
+    "iid_width_tolerance": 0.25,
+    "iid_n_needed": 25,
+    "iid_n_tolerance": 3
+  },
+  "double_well": {
+    "practice_dG_tolerance": 0.5,
+    "practice_D_factor": 1.5,
+    "practice_max_tries": 10,
+    "score_bronze": -1.08,
+    "score_silver": 3.38,
+    "score_gold": 3.61,
+    "blind_area_max": 0.05,
+    "static_dG_width_max": 0.25,
+    "static_logD_width_min": 0.85,
+    "score_prior": -1.39,
+    "score_baseline": -1.18,
+    "score_reference": 3.53
+  }
+}
