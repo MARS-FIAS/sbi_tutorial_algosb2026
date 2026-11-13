@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import torch
 
+import reference_statistics as rs
 import tutorial_utils as tu
 
 
@@ -94,11 +95,16 @@ def test_check_iid_accepts_the_answer_key_and_rejects_drift():
     assert not tu.RESULTS["Part 5 · pin θ down"]
     tu.check_iid([1, 10, 100], exact[:3], 25)  # too few values of n
     assert not tu.RESULTS["Part 5 · pin θ down"]
+    few = [1, 2, 3, 4, 5]  # n = 25 cannot be read off a plot that ends at n = 5
+    tu.check_iid(few, torch.stack([tu.ExactPosterior(x_iid[:n]).width() for n in few]), 25)
+    assert not tu.RESULTS["Part 5 · pin θ down"]
 
 
 def test_check_walls_and_calibration_use_the_hidden_answers():
     hidden = tu._load("toy_hidden.pt")
     tu.check_walls(hidden["wall_low"] + 0.2, hidden["wall_high"] - 0.2)
+    assert tu.RESULTS["Part 3 · hidden walls"]
+    tu.check_walls(hidden["wall_low"] - 0.3, hidden["wall_high"] + 0.3)  # exactly on the tolerance
     assert tu.RESULTS["Part 3 · hidden walls"]
     tu.check_walls([-5, -5], [5, 5])
     assert not tu.RESULTS["Part 3 · hidden walls"]
@@ -113,6 +119,10 @@ def test_check_bimodal():
     tu.check_bimodal(both)
     assert tu.RESULTS["Bonus · bend the simulator"]
     tu.check_bimodal(torch.randn(1000, 2) + 3)
+    assert not tu.RESULTS["Bonus · bend the simulator"]
+    tu.check_bimodal(torch.rand(4000, 2) * 10 - 5)  # the prior is symmetric too, but has no gap
+    assert not tu.RESULTS["Bonus · bend the simulator"]
+    tu.check_bimodal(torch.randn(4000, 2) * 0.3)  # one blob at zero
     assert not tu.RESULTS["Bonus · bend the simulator"]
 
 
@@ -141,21 +151,21 @@ def test_simulator_shape_seed_and_physics():
 
 def test_hop_count_ignores_recrossings():
     x = np.array([[-1.0, -0.2, 0.2, -0.2, -1.0, 0.3, 1.0, 1.0, 0.1, -0.1, 0.9, -0.8]], np.float32)
-    assert tu.count_hops(x).tolist() == [2]
+    assert rs.count_hops(x).tolist() == [2]
 
 
 def test_static_statistics_do_not_see_the_time_order():
     x = tu.simulate_double_well(torch.tensor([[3.0, -0.3]] * 3), seed=0).numpy()
     shuffled = np.random.default_rng(0).permuted(x, axis=1)
-    assert np.allclose(tu.static_summary(x), tu.static_summary(shuffled), atol=1e-5)
-    assert not np.allclose(tu.dynamic_summary(x), tu.dynamic_summary(shuffled), atol=1e-2)
-    assert tu.reference_summary(x).shape == (3, 8)
+    assert np.allclose(rs.static_summary(x), rs.static_summary(shuffled), atol=1e-5)
+    assert not np.allclose(rs.dynamic_summary(x), rs.dynamic_summary(shuffled), atol=1e-2)
+    assert rs.reference_summary(x).shape == (3, 8)
 
 
 def test_summarize_checks_the_students_function():
     x = torch.randn(7, 5000)
-    assert tu.summarize(tu.baseline_summary, x).shape == (7, 2)
-    assert tu.summarize(tu.baseline_summary, x[0]).shape == (1, 2)
+    assert tu.summarize(rs.baseline_summary, x).shape == (7, 2)
+    assert tu.summarize(rs.baseline_summary, x[0]).shape == (1, 2)
     assert tu.summarize(lambda x: x.mean(axis=1), x).shape == (7, 1)
     with pytest.raises(ValueError, match="one row per trajectory"):
         tu.summarize(lambda x: x.mean(), x)
@@ -173,13 +183,16 @@ def test_region_90_of_a_known_gaussian():
     assert not tu.region_90(samples, truth=[5.0, -0.5])[1]
 
 
-def test_dw_check_cells():
+def test_dw_check_cells(capsys):
     hidden = tu._load("dw_hidden.pt")
     dG, D = hidden["practice"][0].item(), 10 ** hidden["practice"][1].item()
     tu.check_practice([(3.0, 0.1), (dG + 0.3, D * 1.3)])
     assert tu.RESULTS["Part 1 · by hand"]
+    capsys.readouterr()
     tu.check_practice([(dG + 1.0, D)])
     assert not tu.RESULTS["Part 1 · by hand"]
+    said = capsys.readouterr().out  # no hint on which of the two parameters is off
+    assert "ΔG‡ within" not in said and "D within" not in said and "D not within" not in said
     tu.check_practice([(dG, D)] * 11)  # right, but too many tries
     assert not tu.RESULTS["Part 1 · by hand"]
 
@@ -198,6 +211,13 @@ def test_dw_check_cells():
     tu.check_blind(tu.dw_prior().sample((5000,)))  # contains the truth but learned nothing
     assert not tu.RESULTS["Part 3 · blind trajectory"]
 
+    tu.check_sparse(score_200=2.9, score_200_start=1.7, score_2000=3.5)  # most of the drop won back
+    assert tu.RESULTS["Bonus · sparse training data"]
+    tu.check_sparse(score_200=1.8, score_200_start=1.7, score_2000=3.5)  # above bronze, nothing won back
+    assert not tu.RESULTS["Bonus · sparse training data"]
+    tu.check_sparse(score_200=-1.3, score_200_start=-2.5, score_2000=-1.0)  # won back, but below bronze
+    assert not tu.RESULTS["Bonus · sparse training data"]
+
     tu.check_wrong_simulator(int(hidden["bonus_tilted_index"]))
     assert tu.RESULTS["Bonus · wrong simulator"]
     tu.check_wrong_simulator((int(hidden["bonus_tilted_index"]) + 1) % 3)
@@ -211,6 +231,10 @@ def test_fallback_posteriors_load_and_sample():
         assert samples.shape == (500, 2)
     samples = tu.load_black_box().sample((300,), x=[0.0, 0.0])
     assert samples.shape == (300, 2)
+    widths = tu.posterior_widths(tu.load_fallback_posterior("static"), None, verbose=False)
+    assert widths[0] < 0.25 and widths[1] > 0.85  # the fallback brings its own statistics
+    reduced = tu.load_reference_training_set()
+    assert reduced["theta"].shape == (10_000, 2) and reduced["s_reference"].shape == (10_000, 8)
     networks = tu.load_three_networks()
     assert sorted(networks) == ["A", "B", "C"]
 
@@ -229,3 +253,25 @@ def test_black_box_takes_one_observation_at_a_time():
     box = tu.load_black_box()
     with pytest.raises(ValueError, match="one observation"):
         box.sample((10,), x=torch.zeros(5, 2))
+
+
+class _LeakyPosterior:
+    """Stands in for a network that puts no probability inside its prior for this observation."""
+
+    def __init__(self):
+        from sbi.utils import BoxUniform
+
+        self.prior = BoxUniform(low=torch.tensor([-1.0, -2.0]), high=torch.tensor([1.0, 2.0]))
+
+    def sample(self, sample_shape, x=None, show_progress_bars=True, reject_outside_prior=True,
+               max_sampling_time=None, return_partial_on_timeout=False):
+        if reject_outside_prior:  # what sbi 0.27 does when nothing is accepted within the time limit
+            raise RuntimeError("Sampling time exceeded and no samples were accepted.")
+        return torch.full((int(np.prod(sample_shape)), 2), 7.0)
+
+
+def test_black_box_never_hangs_and_never_comes_back_short(capsys):
+    samples = tu.BlackBox(_LeakyPosterior()).sample((50,), x=[9.0, 9.0])
+    assert samples.shape == (50, 2)
+    assert torch.equal(samples.max(dim=0).values, torch.tensor([1.0, 2.0]))  # moved onto the edge
+    assert "no probability inside" in capsys.readouterr().out

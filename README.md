@@ -31,7 +31,8 @@ tutorial_utils.py           simulators, the exact posterior, plotting helpers, t
 data/                       observations, blind trajectories, test set, pre-trained networks,
                             and benchmarks.json with the targets of all check cells
 solutions/                  both notebooks with every challenge solved and explained
-reference/                  for the instructors: scripts that produce data/ and the notebooks
+reference/                  for the instructors: scripts that produce data/ and the notebooks,
+                            and our reference summary statistics for Notebook 2
 tests/                      unit tests, and a test that executes all four notebooks
 ```
 
@@ -64,7 +65,7 @@ The networks are pickled, so run the scripts with the `sbi` version the notebook
 ```bash
 pip install pytest nbclient ipykernel
 pytest tests/test_utils.py -q             # 20 seconds
-pytest tests/test_notebooks.py -q -s      # executes all four notebooks, about 10 minutes
+pytest tests/test_notebooks.py -q -s      # executes all four notebooks, about 6 minutes
 ```
 
 The notebook test checks that the student notebooks run from top to bottom with every challenge still open, and that the solutions notebooks pass every check. With `-s` it prints the slowest cells.

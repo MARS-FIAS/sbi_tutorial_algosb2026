@@ -158,7 +158,7 @@ tries = []        # every try is recorded here; run this cell again to start ove
 def try_parameters(dG, D):
     """Simulate one trajectory at (dG, D) and show it next to the practice trajectory."""
     tries.append((dG, D))
-    x_try = simulator(torch.tensor([[dG, np.log10(D)]]), seed=len(tries))[0]
+    x_try = simulator(torch.tensor([[dG, np.log10(D)]]), seed=1000 + len(tries))[0]
     plot_trajectories([x_practice, x_try],
                       ["practice trajectory", rf"try {len(tries)}: $\Delta G^\ddagger$ = {dG}, D = {D}"])
     return x_try
@@ -458,7 +458,7 @@ check_blind(samples)
 # - *Small alone is easy.* Train too long on too few simulations, or use too many statistics, and the posterior gets narrow and confidently wrong.
 # - *Containing the truth alone is easy too.* The prior contains the truth. So does the static-only posterior of Part 2, which covers about 7% of the prior area and fails the 5% target.
 #
-# One caveat for the discussion: a calibrated 90% region misses the truth for one trajectory in ten. A single hit proves little; the coverage check of Notebook 1 is the real test. The score of Part 2 is the average of this check over 200 trajectories.
+# One caveat for the discussion: a calibrated 90% region misses the truth for one trajectory in ten. A single hit proves little; the coverage check of Notebook 1 is the real test. The score of Part 2 asks for the same two things, narrow and in the right place, of 200 trajectories at once and in one number.
 
 # %% tags=["solution"]
 # What each group of statistics says about the blind trajectory
@@ -513,12 +513,13 @@ print("\ndynamic statistics, original:\n", summary_dynamic(x[:5].numpy()).round(
 print("dynamic statistics, frames shuffled in time:\n", summary_dynamic(shuffled).round(3))
 
 # %% [markdown] tags=["solution"]
-# **Why it works.** A statistic of the histogram does not change when the frames are shuffled in time. $D$ is a time scale: it only says how fast the particle moves through the same landscape. Shuffling destroys every trace of it and leaves the histogram untouched. So a posterior trained on histogram statistics cannot know $D$, however many simulations it sees.
+# **Why it works.** A statistic of the histogram does not change when the frames are shuffled in time. $D$ is a time scale: it only sets how fast the particle moves through the same landscape. In equilibrium the histogram is the Boltzmann distribution $e^{-G_0(x)}$, and $D$ does not appear in it. So for a long, well-equilibrated trajectory a posterior trained on histogram statistics cannot know $D$, however many simulations it sees.
 #
-# Two details for the discussion.
+# These trajectories are finite, and that lets a little of $D$ through. Two details for the discussion.
 #
-# - *Use $|x|$, not $x$.* The plain standard deviation of $x$ looks static but is not: at a barrier of 6 $k_BT$ it falls from 0.90 to 0.43 as $D$ goes from 1 to 0.1, because a slow particle stays in the well it started in. That leaks $D$ into a statistic of the histogram. The mean and standard deviation of $x$ also pin the barrier poorly, which is why the starting cell fails on the $\Delta G^{\ddagger}$ target.
-# - *"Nothing about D" is only almost true for a finite trajectory.* A slow particle collects fewer independent samples, so its histogram is noisier. With several static statistics the network can see how noisy the histogram is, and from that it learns a little about $D$: the interval shrinks to about 94% of the prior's. With a single static statistic it stays at 99%. That is why the target is 85% and not 100%.
+# - *Ignoring the time order is necessary, not sufficient.* The standard deviation of $x$ is a statistic of the histogram too, and it survives the shuffle. Still it knows about $D$: at a barrier of 6 $k_BT$ it falls from 0.90 to 0.43 as $D$ goes from 1 to 0.1, because a slow particle is still in the well it started in when the trajectory ends. The trajectory has not equilibrated, and how far it got depends on $D$. Statistics of $|x|$ remove this effect by symmetry: they do not care which well the particle is in. (The mean and standard deviation of $x$ also pin the barrier poorly, which is why the starting cell fails on the $\Delta G^{\ddagger}$ target.)
+# - *Even statistics of $|x|$ leak a little.* A slow particle collects fewer independent samples, so its histogram is noisier. With several static statistics the network can see how noisy the histogram is, and from that it learns a little about $D$: the interval shrinks to about 94% of the prior's. With a single static statistic it stays at 99%. That is why the target is 85% and not 100%.
+#
 
 # %% tags=["solution"]
 # The reverse: statistics that give D and nothing about the barrier height?
@@ -537,9 +538,9 @@ plot_posteriors([samples_one_lag, samples], ["displacement over 1 frame only", "
 #
 # The band in the plot is tilted, and that is what stops it. For free diffusion the squared displacement would be $2D\tau$, a pure measure of $D$. But one frame lasts $\tau = 0.1$, and in that time the particle already feels the walls of its well: the well relaxes at the rate $4\Delta G^{\ddagger}D$, which is between 0.8 and 24 here. The same displacement can come from a slow particle in a wide well or a fast one in a narrow well. Pinning $D$ takes knowing the barrier.
 #
-# So there is an asymmetry. The histogram is an equilibrium property, and equilibrium does not know time: static statistics are blind to $D$ by a symmetry, and they pin the barrier just as well without it. No such symmetry protects the dynamics from the potential: every dynamic statistic sees the forces. Only a much higher frame rate, $\tau \ll 1/(4\Delta G^{\ddagger}D)$, would let the short-time displacement measure $D$ alone.
+# So there is an asymmetry. The histogram is an equilibrium property, and equilibrium does not know time: static statistics of an equilibrated trajectory are blind to $D$, and they pin the barrier just as well without it. No such symmetry protects the dynamics from the potential: every dynamic statistic sees the forces. Only a much higher frame rate, $\tau \ll 1/(4\Delta G^{\ddagger}D)$, would let the short-time displacement measure $D$ alone.
 #
-# **Message of Part 4.** The histogram is an equilibrium property, and equilibrium carries no time scale. No statistic of the histogram can identify $D$.
+# **Message of Part 4.** The histogram is an equilibrium property, and equilibrium carries no time scale. No statistic of an equilibrium histogram can identify $D$. A finite trajectory lets a little of $D$ through, by how far its histogram has converged.
 
 # %% [markdown]
 # ## Wrap-up
@@ -626,20 +627,20 @@ tu.check_wrong_simulator(pick)
 #
 # Simulations are often expensive. Cut the training set from 2,000 simulations to 200, `theta[:200]` and `x[:200]`, and watch the score drop. Then win it back with those 200 simulations: change the statistics, the network (`density_estimator=`) or the training (any argument of sbi's `.train()`, for example `training_batch_size=`).
 #
-# **Passes when** you are back above bronze with 200 simulations. How close to your score with 2,000 do you get?
+# **Passes when**, with 200 simulations, you are back above bronze and have won back at least half of what the cut cost you.
 
 # %% tags=["student"]
 # Your training with 200 simulations
 
 
 
-# tu.check_sparse(score_200, num_simulations=200)
+# tu.check_sparse(score_200, score_200_start=..., score_2000=...)
 
 # %% tags=["solution"]
 theta_200, x_200 = theta[:200], x[:200]
 
 print("the reference statistics, trained as before:")
-_, score_200_plain = train_and_score(my_summary, theta_200, x_200)
+_, score_200_start = train_and_score(my_summary, theta_200, x_200)
 
 print("\nthe same, with a batch size of 20 instead of 200:")
 _, score_200_batches = train_and_score(my_summary, theta_200, x_200, training_batch_size=20)
@@ -652,7 +653,7 @@ def summary_four(x):
 print("\nfour statistics that estimate the parameters, a mixture density network, batch size 20:")
 _, score_200 = train_and_score(summary_four, theta_200, x_200, density_estimator="mdn", training_batch_size=20)
 
-tu.check_sparse(score_200, num_simulations=200)
+tu.check_sparse(score_200, score_200_start=score_200_start, score_2000=score)
 
 # %% [markdown] tags=["solution"]
 # **Why it works.** With ten times fewer simulations the reference solution falls from about 3.5 to about 1.6. Three changes win most of it back, to about 2.9.

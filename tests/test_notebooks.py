@@ -64,7 +64,8 @@ def test_student_notebook_runs_and_leaves_the_challenges_open(name):
     print()
     report_slowest(notebook, name)
     assert "Traceback" not in text
-    assert text.count("❌ NOT YET") >= 4, "the starting cells should not pass the checks"
+    assert text.count("❌ NOT YET ·") >= 4, "every check cell should report on its challenge"
+    assert "✅ PASS" not in text, "no starting cell should pass its check"
     assert "Warning" not in on_stderr(notebook), "no warnings on screen"
 
 
@@ -83,3 +84,17 @@ def test_solutions_notebook_passes_every_check(name):
     assert passed == total and total >= 4, scorecard
     bonus = [line for line in text.splitlines() if "· Bonus ·" in line]
     assert len(bonus) >= 2 and all("✅ PASS" in line for line in bonus), bonus
+    if name == "02_sbi_double_well":
+        assert "🥈 silver" in text and "🥇 gold" in text, "the reference is silver, the gold answer gold"
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_committed_solutions_notebook_is_executed_and_clean(name):
+    """The solutions notebooks ship with their outputs: every check passed, nothing raised."""
+    notebook = nbformat.read(ROOT / f"solutions/{name}_solutions.ipynb", as_version=4)
+    outputs = [o for c in notebook.cells for o in c.get("outputs", [])]
+    assert len(outputs) > 20, "run python reference/build_notebooks.py --run-solutions"
+    assert not [o for o in outputs if o.output_type == "error"]
+    scorecard = [line for line in printed(notebook).splitlines() if "checks passed." in line][-1]
+    passed, total = (int(n) for n in scorecard.replace(" checks passed.", "").split(" of "))
+    assert passed == total, scorecard

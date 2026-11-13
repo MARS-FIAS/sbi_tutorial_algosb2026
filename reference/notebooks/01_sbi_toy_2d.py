@@ -194,7 +194,7 @@ axes[0].legend(loc="lower left", fontsize=8);
 # %% [markdown]
 # Your best θ sits in the middle of the kept cloud, your furthest θ at its rim. And the θ that $x_o$ was really simulated with is just one of the plausible parameters. It is not the best-fitting one.
 #
-# The tolerance ε sets a trade-off: a large ε keeps parameters that are too far off, a small ε keeps almost nothing. Either way the loop throws most simulations away, and it has to start over for every new observation.
+# The tolerance ε sets a trade-off: a large ε keeps parameters that are too far off, a small ε keeps almost nothing. Either way the loop throws most simulations away, and for a new observation it has to run again.
 
 # %% [markdown] tags=["solution"]
 # **Message of Part 1.** Inference is the inverse problem. Many parameters could have produced $x_o$, and the posterior is that set with weights. A loop that keeps the parameters whose simulations land near $x_o$ recovers it without a likelihood. This is rejection ABC, and it throws almost every simulation away: here about 0.3% are kept.
@@ -210,7 +210,7 @@ axes[0].legend(loc="lower left", fontsize=8);
 #
 # **Challenge.** Change the code until your posterior matches the answer key. Then go for the record: how few simulations are enough?
 #
-# **Passes when** the overlay shows your posterior on top of the answer key and the **mismatch score** confirms it at 0.6 or below. The mismatch score is a classifier two-sample test (`c2st` in `sbi.utils.metrics`): a classifier is trained to tell your samples from samples of the answer key. A score of 0.5 means it cannot tell them apart, 1.0 means it always can.
+# **Passes when** the overlay shows your posterior on top of the answer key and the **mismatch score** confirms it at 0.55 or below. The mismatch score is a classifier two-sample test (`c2st` in `sbi.utils.metrics`): a classifier is trained to tell your samples from samples of the answer key. A score of 0.5 means it cannot tell them apart, 1.0 means it always can.
 
 # %% tags=["student"]
 num_simulations = 50                                    # ← how few are enough?
@@ -262,7 +262,7 @@ check_match(samples, num_simulations, x_o)
 # - *The network was too small.* One transform with two hidden units cannot express "the posterior mean follows x, in both coordinates, across the whole prior". With this network the mismatch stays above 0.8 for 50 as well as for 5,000 simulations. `hidden_features=50, num_transforms=5` are sbi's defaults; writing `density_estimator="nsf"` gives the same.
 # - *There were too few simulations.* 50 pairs do not show the network where the posterior sits for every x in a 10 × 10 box.
 #
-# With the default network the score reaches 0.6 at about 500 simulations and comes down to about 0.52 with 2,000. The cell below shows the curve, and how to get the record.
+# With the default network the score reaches 0.55 somewhere between 500 and 1,000 simulations and comes down to about 0.52 with 2,000. The cell below shows the curve, and how to get the record.
 
 # %% tags=["solution"]
 # How the mismatch falls with the number of simulations, for two density estimators.
@@ -278,13 +278,25 @@ fig, ax = plt.subplots(figsize=(6, 3.4))
 for name, label, color in (("nsf", "spline flow (nsf)", tu.C_YOURS),
                            ("mdn", "mixture density network (mdn)", tu.C_OTHER)):
     ax.plot(counts, [npe_mismatch(n, name) for n in counts], "o-", lw=2, color=color, label=label)
-ax.axhline(0.6, color=tu.C_MUTED, ls="--", lw=1)
-ax.text(counts[-1], 0.61, "target", ha="right", color=tu.C_MUTED)
+ax.axhline(0.55, color=tu.C_MUTED, ls="--", lw=1)
+ax.text(counts[-1], 0.56, "target", ha="right", color=tu.C_MUTED)
 ax.set(xscale="log", xlabel="number of simulations", ylabel="mismatch score", ylim=(0.45, 1))
 ax.legend();
 
 # %% [markdown] tags=["solution"]
-# **For the record.** "Flexible enough" does not mean "as flexible as possible". The true posterior here is a Gaussian whose mean follows x. A mixture density network (`density_estimator="mdn"`) builds that shape in, so it needs far fewer simulations than the spline flow: it often passes with 50 to 100. sbi's default flow (`"maf"`) lies in between, at 100 to 200. Knowing the shape of the answer buys simulations.
+# **For the record.** "Flexible enough" does not mean "as flexible as possible". The true posterior here is a Gaussian whose mean follows x. A mixture density network (`density_estimator="mdn"`) builds that shape in, so it needs far fewer simulations than the spline flow: it often passes with about 100. sbi's default flow (`"maf"`) lies in between, at a few hundred. Knowing the shape of the answer buys simulations.
+#
+# **How sharp is the mismatch score?** Not very, and it is worth saying so in the room. We distorted samples of the answer key on purpose and scored them:
+#
+# | Samples of the answer key, but ... | Mismatch score |
+# | --- | --- |
+# | unchanged | 0.50 |
+# | 20% too wide | 0.51 |
+# | 30% too wide, or 20% too narrow | 0.53 |
+# | 50% too wide | 0.58 |
+# | shifted by 0.4 standard deviations | 0.57 |
+#
+# So a pass at 0.55 means "within about 30% in width and a third of a standard deviation in position", not "identical". The overlay plot shows more than the number. A classifier needs many samples to see a small difference between two distributions, and Part 5 will ask for more: there the width has to be right within 25%.
 #
 # **If a training run goes badly wrong.** With `"maf"` and 10,000 simulations, about one training run in ten gets stuck here and ignores one coordinate of x completely: one marginal stays as flat as the prior. The overlay shows it at once, and running the cell again fixes it. We never saw this with `"nsf"` or `"mdn"`, which is why the starting cell uses `"nsf"`.
 #
@@ -320,6 +332,8 @@ plot_posteriors([probe, exact.sample((2000,))], ["black box", "answer key"], lim
 # **Challenge.** Find out where the black box can be trusted: locate the four edges of its training prior.
 #
 # **Passes when** all four edges are located to within 0.3.
+#
+# Probe the black box, not your own network from Part 2. Far outside its prior a network may put all its samples outside the prior, and `sbi`, which throws those away and draws again, then never finishes. The black box has a time limit built in. Bonus 2 shows how to set one yourself.
 
 # %% tags=["student"]
 x_probe = torch.tensor([0.0, 0.0])                 # ← ask the black box about any observation you like
@@ -371,12 +385,12 @@ check_walls(wall_low, wall_high)
 #
 # The black box was trained with θ₁ in [−1.4, 4.2] and θ₂ in [−3.7, 0.9].
 #
-# **Message of Part 3.** An amortized network carries its training prior with it. Inside that prior it is equally good everywhere, because the posterior is the same Gaussian shifted to the observation: the black box, trained with 10,000 simulations, has a mismatch score between 0.49 and 0.51 at every interior point we tried. For observations its prior cannot explain, the posterior piles up at the edge of the prior and is confidently wrong. Nothing in the output warns you. Before you trust a trained network on real data, check that the data look like something its prior can produce.
+# **Message of Part 3.** An amortized network carries its training prior with it. Inside that prior it is equally good everywhere, because the posterior is the same Gaussian shifted to the observation: the black box, trained with 10,000 simulations, has a mismatch score of about 0.5 (0.48 to 0.53) at every interior point we tried. For observations its prior cannot explain, the posterior piles up at the edge of the prior and is confidently wrong. Nothing in the output warns you. Before you trust a trained network on real data, check that the data look like something its prior can produce.
 
 # %% [markdown]
 # ## Part 4 · Which network lies? (12 min)
 #
-# Three more trained networks, A, B and C. All three were trained for this problem with 10,000 simulations. One is **overconfident** (its posteriors are too narrow), one is **underconfident** (too wide), one is **fine**.
+# Three more trained networks, A, B and C. All three were trained for this problem with 10,000 simulations. Each of them is either **overconfident** (its posteriors are too narrow), **underconfident** (too wide) or **fine**. You are not told how many of each kind there are.
 
 # %%
 networks = tu.load_three_networks()      # {"A": network, "B": network, "C": network}
@@ -385,13 +399,21 @@ plot_posteriors([net.sample((2000,), x=x_o) for net in networks.values()],
                 [f"network {name}" for name in networks], limits=[[0, 5], [-4, 1]]);
 
 # %% [markdown]
-# They disagree, and each of them looks like a reasonable posterior. In a real problem there is no answer key to settle it, so in this part **the answer key is off limits**. What you always have is the simulator.
+# They disagree, and each of them looks like a reasonable posterior. Which width is the right one? In a real problem there is no answer key to settle it, so in this part **the answer key is off limits**. What you always have is the simulator.
 #
 # The idea of a **coverage check**: if a posterior is right, the parameter that was used to simulate a data set falls inside the posterior's 90% interval nine times out of ten, and inside its 50% interval every second time. An overconfident posterior misses more often. An underconfident one misses less often.
 #
-# **Challenge.** Find out which network is which, with the simulator and a coverage check. Everything you need has appeared above: `prior.sample()`, `simulator(theta)`, `network.sample((500,), x=...)`, and `torch.quantile`.
+# The cell below shows how to get an interval from samples.
+#
+# **Challenge.** Find out which network is which, with the simulator and a coverage check. Everything you need has appeared by now: `prior.sample()`, `simulator(theta)`, `network.sample((500,), x=...)`, and `torch.quantile`.
 #
 # **Passes when** all three labels are right.
+
+# %%
+# The 90% interval of θ₁ that network A reports for x_o: 5% of its samples lie below it, 5% above
+samples_A = networks["A"].sample((2000,), x=x_o)
+low, high = torch.quantile(samples_A[:, 0], torch.tensor([0.05, 0.95]))
+print(f"network A says: with 90% probability θ₁ lies between {low:.2f} and {high:.2f}")
 
 # %% tags=["student"]
 # Your coverage check
@@ -422,9 +444,10 @@ for name, (c50, c90) in coverages.items():
     print(f"network {name}: the 50% interval contains the truth in {c50:.0%} of the tests, the 90% interval in {c90:.0%}")
 
 # %% tags=["solution"]
-# One network of each kind: the lowest coverage is the overconfident one, the highest the underconfident one.
-ranked = sorted(coverages, key=lambda name: coverages[name][0])
-labels = {ranked[0]: "overconfident", ranked[1]: "fine", ranked[2]: "underconfident"}
+# A correct 50% interval contains the truth in 50% of the tests. With 300 tests that count is
+# uncertain by about 3 points, so anything between 40% and 60% is fine.
+labels = {name: "overconfident" if c50 < 0.4 else "underconfident" if c50 > 0.6 else "fine"
+          for name, (c50, c90) in coverages.items()}
 print(labels)
 
 check_calibration(labels)
@@ -435,15 +458,23 @@ check_calibration(labels)
 # %% [markdown] tags=["solution"]
 # **Why it works.** For data you simulate yourself, you know the parameter behind it. A correct 90% interval contains that parameter in 90% of such tests, and a correct 50% interval in 50%, by definition of the posterior. The check needs no answer key and no likelihood, only the simulator and the network.
 #
+# Measured with 1,000 tests per network, which pins each number to about one point:
+#
 # | Network | 50% interval contains the truth | 90% interval contains the truth | Verdict |
 # | --- | --- | --- | --- |
-# | A | about 75% | about 96% | too wide: underconfident |
-# | B | about 27% | about 61% | too narrow: overconfident |
-# | C | about 49% | about 87% | fine |
+# | A | 74% | 96% | too wide: underconfident |
+# | B | 27% | 61% | too narrow: overconfident |
+# | C | 49% | 87% | fine |
 #
-# *The 50% level is the sharper test.* At the 90% level the underconfident network and the fine one are only 9 points apart, and with 300 tests each count is uncertain by about 2 points. At the 50% level they are 25 points apart. The reason is the prior: near its walls the wide posterior of network A is cut off and piles up against the wall, so its central 90% interval misses parameters that sit right at the wall. That keeps A at 96% instead of 100%, and it also costs the fine network a few points (87% instead of 90%). A coverage check at several levels says more than one at a single level.
+# *Looking at the widths is not enough.* The first plot shows that A is the widest and B the narrowest, but not which width is right: all three could be too narrow. Only the test against simulated data fixes the scale.
 #
-# The three networks were trained with the wrong simulator on purpose: A with noise 1.0, B with noise 0.25, C with the true noise 0.5. A network can only be as right as the simulator it learned from.
+# *The 50% level is the sharper test.* At the 90% level the underconfident network and the fine one are only 9 points apart, and with 300 tests each count is uncertain by about 2 points. At the 50% level they are 25 points apart. A coverage check at several levels says more than one at a single level.
+#
+# *Why is A not at 100%?* Because of the walls of the prior. Near a wall the wide posterior is cut off and piles up against it, so its central interval misses parameters that sit right at the wall. Even the exact posterior of a simulator with noise 1.0 would reach only 98% and 77% here; away from the walls it would reach 99.9% and 83%.
+#
+# *Why is C at 87% and not at 90%?* (The 300 tests above are too few to show it; 1,000 are enough.) That is not the prior. A correct posterior has exactly 90% coverage with any prior, bounded or not: the answer key does. The missing three points are the error of this network: a flow cannot reproduce the sharp cut at the walls, and is a little too narrow there. So "fine" means fine, not perfect, and the coverage check is sensitive enough to see the difference.
+#
+## The three networks were trained with the wrong simulator on purpose: A with noise 1.0, B with noise 0.25, C with the true noise 0.5. A network can only be as right as the simulator it learned from.
 #
 # `sbi` has this check built in, for all confidence levels at once: `run_sbc` and `run_tarp` in `sbi.diagnostics`, with `sbc_rank_plot` in `sbi.analysis`.
 #
@@ -598,7 +629,7 @@ tu.scorecard()
 #
 # Change one line of the simulator so that $x_1$ depends on $\theta_1^2$ instead of $\theta_1$. Train NPE on the new simulator and look at the posterior for $x_o$. What happened to it, and why?
 #
-# **Passes when** your posterior puts between 40% and 60% of its samples on each side of $\theta_1 = 0$.
+# **Passes when** your posterior puts between 40% and 60% of its samples on each side of $\theta_1 = 0$, with a gap in between: less than 5% of them within $|\theta_1| < 0.5$.
 
 # %% tags=["student"]
 # Your bent simulator, your training, your samples_bent
@@ -617,7 +648,9 @@ inference = NPE(prior=prior, density_estimator="nsf")
 inference.append_simulations(theta_bent, simulator_bent(theta_bent)).train()
 samples_bent = inference.build_posterior().sample((4000,), x=x_o)
 
-plot_posteriors(samples_bent, "NPE posterior, bent simulator", limits=LIMITS)
+plot_posteriors(samples_bent, "NPE posterior, bent simulator", limits=LIMITS);
+
+# %% tags=["solution"]
 tu.check_bimodal(samples_bent)
 
 # %% [markdown] tags=["solution"]
@@ -630,10 +663,18 @@ tu.check_bimodal(samples_bent)
 #
 # The observation `x_far` below lies beyond the walls at ±5: with the prior of this notebook, no θ can explain it well. Retrain NPE with a prior wide enough that `x_far` gets a posterior that passes the Part 2 check.
 #
-# **Passes when** the mismatch score at `x_far` is 0.6 or below, against the answer key for your new prior.
+# **Passes when** the mismatch score at `x_far` is 0.55 or below, against the answer key for your new prior.
+
+First, what your network from Part 2 says about `x_far`. Asked without a time limit, it may never answer: if none of its samples fall inside the prior, `sbi` keeps drawing. `max_sampling_time` stops that.
 
 # %%
 x_far = torch.tensor([7.0, -6.5])
+
+try:
+    samples_old = posterior.sample((2000,), x=x_far, max_sampling_time=5.0, return_partial_on_timeout=True)
+    print(f"after at most 5 seconds: {len(samples_old)} of 2000 samples inside the prior")
+except RuntimeError:
+    print("after 5 seconds: not a single sample inside the prior")
 
 # %% tags=["student"]
 # Your wider prior, your training, your samples_far
@@ -654,7 +695,9 @@ samples_far = inference.build_posterior().sample((2000,), x=x_far)
 
 exact_far = ExactPosterior(x_far, low=low, high=high)
 plot_posteriors([samples_far, exact_far.sample((2000,))], ["NPE, wide prior", "answer key, wide prior"],
-                limits=[[-10, 10], [-10, 10]])
+                limits=[[-10, 10], [-10, 10]]);
+
+# %% tags=["solution"]
 tu.check_repair(samples_far, num_simulations_far, x_far, low=low, high=high)
 
 # %% [markdown] tags=["solution"]
@@ -665,14 +708,14 @@ tu.check_repair(samples_far, num_simulations_far, x_far, low=low, high=high)
 #
 # NPE can take several observations if you give it an *embedding network* that turns a set of points into a fixed-size summary, the same whatever the order of the points. Follow the sbi guide [How to use permutation-invariant embeddings for iid observations](https://sbi.readthedocs.io/en/stable/how_to_guide/08_permutation_invariant_embeddings.html) and reach the Part 5 benchmark with NPE instead of NLE.
 #
-# **Passes when** `check_iid` passes with widths from your NPE posterior.
+# **Passes when** `check_iid` passes with widths from your NPE posterior. It is enough to cover n from 1 to 25.
 
 # %% tags=["student"]
 # Your permutation-invariant NPE
 
 
 
-# check_iid(n_values, widths_npe, n_needed)
+# check_iid(n_values, widths_npe, n_needed, key="Bonus · NPE on sets")
 
 # %% tags=["solution"]
 from sbi.neural_nets.embedding_nets import FCEmbedding, PermutationInvariantEmbedding
@@ -688,8 +731,9 @@ if RUN_SLOW_BONUS:
     set_sizes = torch.exp(torch.rand(num_sets) * np.log(max_n)).round().long().clamp(1, max_n)
     x_sets[torch.arange(max_n)[None] >= set_sizes[:, None]] = float("nan")              # small sets as often as large ones
 
-    # 4. Training: an embedding net reads every point, sums over the set, and hands the sum
-    #    and the size of the set to the flow. The order of the points cannot matter.
+    # 4. Training: an embedding net reads every point and sums over the set, so the order of the
+    #    points cannot matter. The sum grows with the number of points, which tells the flow how
+    #    many there are.
     single_point_net = FCEmbedding(input_dim=2, num_hiddens=40, num_layers=2, output_dim=10)
     embedding_net = PermutationInvariantEmbedding(single_point_net, trial_net_output_dim=10,
                                                   num_layers=2, num_hiddens=40, output_dim=10)
@@ -736,6 +780,8 @@ if RUN_SLOW_BONUS:
 #
 # So NPE on sets is the right tool when the number of observations is small or fixed and you want posteriors without MCMC. When it varies over orders of magnitude, learn the likelihood of one observation instead.
 
+*All numbers above are from single runs or a few seeds; expect them to move.* One more caveat for the curious: `PermutationInvariantEmbedding` also passes the size of each set to its second network, but in sbi 0.27.0 that number is wrong for points with more than one coordinate when several sets are processed in one batch (set i receives the size of set i // 2). The network still learns the size from the sum. In one paired run with the sizes corrected by hand, the result at n = 25 was the same and the result at n = 50 somewhat better.
+
 # %% [markdown]
 # ### Bonus 4 · NLE against NRE
 #
@@ -748,7 +794,7 @@ if RUN_SLOW_BONUS:
 
 
 
-# check_iid(n_values, widths_nre, n_needed)
+# check_iid(n_values, widths_nre, n_needed, key="Bonus · NRE")
 
 # %% tags=["solution"]
 from sbi.inference import NRE
@@ -780,6 +826,6 @@ ax.legend()
 check_iid(n_values, widths_nre, n_needed, key="Bonus · NRE")
 
 # %% [markdown] tags=["solution"]
-# **What to see.** NRE passes the same benchmark on the same 10,000 pairs: its widths stay within 10 to 20% of the answer key. It gets there by another route. Instead of a density estimator it trains a classifier: is this pair (θ, x) a matching pair, or were θ and x shuffled? The output of the classifier is the likelihood ratio, and ratios of independent observations multiply just like likelihoods.
+# **What to see.** NRE passes the same benchmark on the same 10,000 pairs: its widths stay within 10 to 20% of the answer key. It gets there by another route. Instead of a density estimator it trains a classifier: given an x and several candidate θ, which θ was x simulated with? What the classifier learns is the likelihood ratio, and ratios of independent observations multiply just like likelihoods.
 #
 # One thing the benchmark does not test is the centre of the posterior. In three runs of ours, the NRE posterior at n = 100 sat up to 2.5 of its own standard deviations away from the centre of the answer key, and the offset grew with n. That is the price named in Part 5: a small error in what the network learned about one observation is added up a hundred times. The more observations you combine, the more carefully the single-observation network has to be trained and checked.

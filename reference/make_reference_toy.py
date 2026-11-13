@@ -39,9 +39,10 @@ NUM_SIMULATIONS = 10_000
 WALL_LOW, WALL_HIGH = torch.tensor([-1.4, -3.7]), torch.tensor([4.2, 0.9])
 # Part 4: which letter was trained with which simulator noise (the true noise is 0.5).
 CALIBRATION = {"A": (1.0, "underconfident"), "B": (0.25, "overconfident"), "C": (0.5, "fine")}
-# Accepted coverage of the 90% interval of theta_1, measured with 1,000 tests. A well-trained
-# network reaches about 88%, not 90%: near the walls of the prior the flow is slightly off.
-# The wide network stays near 96%, not 100%: its truncated posterior misses on one side there.
+# Accepted coverage of the 90% interval of theta_1, measured with 1,000 tests. The exact posterior
+# has 90% whatever the prior. A well-trained network reaches about 88%: near the walls of the
+# prior the flow is slightly too narrow. The wide network stays near 96%: the exact posterior of a
+# noise-1.0 model would give 98%, because near the walls its central interval misses on one side.
 COVERAGE_BANDS = {"overconfident": (0.0, 0.70), "fine": (0.865, 0.915), "underconfident": (0.94, 1.0)}
 # Part 5: MCMC settings of the NLE posterior. Cheap enough for a free Colab CPU.
 MCMC = dict(num_chains=20, thin=1, warmup_steps=20)
@@ -157,7 +158,7 @@ def main():
     exact_hidden = tu.ExactPosterior(x_o, low=WALL_LOW.numpy(), high=WALL_HIGH.numpy())
     score = tu.mismatch_score(samples, exact_hidden.sample((2000,), seed=1))
     print(f"Part 3  hidden-prior network at x_o: mismatch {score:.2f} (inside its walls: should be ≈ 0.5)")
-    assert score < 0.6
+    assert score < tu.load_benchmarks()["toy"]["c2st_max"]
     for x_far, wall in ((torch.tensor([9.0, -1.0]), WALL_HIGH[0]), (torch.tensor([-9.0, -1.0]), WALL_LOW[0])):
         s = posterior_hidden.sample((1000,), x=x_far, show_progress_bars=False)
         edge = s[:, 0].max() if x_far[0] > 0 else s[:, 0].min()

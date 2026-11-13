@@ -326,8 +326,6 @@ class BlackBox:
 
     def sample(self, sample_shape=(1000,), x=None):
         """Posterior samples for one observation x of shape (2,). Returns shape (num_samples, 2)."""
-        import logging
-
         if x is None:
             raise ValueError("Give the observation: black_box.sample((1000,), x=x_o)")
         x = _as_tensor(x, "x")
@@ -335,18 +333,11 @@ class BlackBox:
             raise ValueError(f"Give one observation of shape (2,) at a time, got shape {tuple(x.shape)}.")
         x = x.reshape(1, 2)
         num_samples = int(np.prod(sample_shape))
-        logging.disable(logging.WARNING)
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                samples = self.__posterior.sample(
-                    (num_samples,), x=x, show_progress_bars=False,
-                    max_sampling_time=2.0, return_partial_on_timeout=True)
-        finally:
-            logging.disable(logging.NOTSET)
-        if len(samples) < num_samples:
+        samples, moved = _sample_inside_prior(self.__posterior, num_samples, x, time_limit=2.0)
+        if moved:
             print(f"Note: for x = {x[0].tolist()} the network puts almost no probability inside "
-                  f"its own prior. Returning the {len(samples)} samples found in 2 seconds.")
+                  f"its own prior. {moved} of {num_samples} samples lay outside and were moved "
+                  "onto its edge.")
         return samples
 
     def __repr__(self):
@@ -364,7 +355,7 @@ def check_walls(low, high):
     hidden = _load("toy_hidden.pt")
     guess = torch.stack([_as_tensor(low, "low").reshape(2), _as_tensor(high, "high").reshape(2)])
     truth = torch.stack([hidden["wall_low"], hidden["wall_high"]])
-    ok = (guess - truth).abs() <= b["wall_tolerance"]
+    ok = (guess - truth).abs() <= b["wall_tolerance"] + 1e-5  # float32: 0.3 away must count
     names = [["θ₁ lower", "θ₂ lower"], ["θ₁ upper", "θ₂ upper"]]
     marks = ", ".join(f"{names[i][j]} {'✓' if ok[i, j] else '✗'}" for i in range(2) for j in range(2))
     _report("Part 3 · hidden walls", bool(ok.all()),
@@ -428,6 +419,9 @@ def check_iid(n_values, widths, n_needed, key="Part 5 · pin θ down"):
     if not isinstance(n_needed, (int, float, np.integer, np.floating)):
         _report(key, False, "set n_needed to the number of observations you read off your plot")
         return
+    if not min(n_values) <= n_needed <= max(n_values):
+        _report(key, False, "your reading n_needed lies outside the range of n your plot covers")
+        return
     exact = torch.stack([ExactPosterior(x_iid[:n]).width(0.9) for n in n_values])
     error = (widths / exact[:, : widths.shape[1]] - 1).abs()
     worst = error.max().item()
@@ -441,11 +435,16 @@ def check_iid(n_values, widths, n_needed, key="Part 5 · pin θ down"):
 
 
 def check_bimodal(samples):
-    """Bonus. With x depending on θ₁², both signs of θ₁ explain the data equally well."""
+    """Bonus. With x depending on θ₁², both signs of θ₁ explain the data equally well.
+
+    Two separate modes: about half of the samples on each side of θ₁ = 0, and a gap between.
+    """
     samples = _as_tensor(samples, "samples")
     fraction = (samples[:, 0] > 0).float().mean().item()
-    _report("Bonus · bend the simulator", 0.4 <= fraction <= 0.6,
-            f"{fraction:.0%} of the samples have θ₁ > 0 (target: between 40% and 60%)")
+    in_gap = (samples[:, 0].abs() < 0.5).float().mean().item()
+    _report("Bonus · bend the simulator", 0.4 <= fraction <= 0.6 and in_gap < 0.05,
+            f"{fraction:.0%} of the samples have θ₁ > 0 (target: between 40% and 60%), "
+            f"{in_gap:.0%} lie in the gap |θ₁| < 0.5 (target: under 5%)")
 
 
 def check_repair(samples, num_simulations, x_far, low, high):
@@ -629,9 +628,18 @@ def posterior_widths(posterior, summary, verbose=True):
     width of the prior's 90% interval: 1.0 means nothing learned, 0.1 means ten
     times narrower than the prior.
     """
+    import time
+
+    if isinstance(posterior, FallbackPosterior):  # a fallback brings its own statistics
+        posterior, summary = posterior.posterior, posterior.summary
     theta_test, x_test = load_test_set()
     s_test = summarize(summary, x_test)
-    samples = torch.stack([_sample_quietly(posterior, 400, s_o) for s_o in s_test], dim=1)
+    start, samples = time.time(), []
+    for s_o in s_test:
+        # 0.5 seconds per test trajectory, and once 20 seconds are spent, no more waiting at all
+        limit = 0.5 if time.time() - start < 20 else 0.0
+        samples.append(_sample_inside_prior(posterior, 400, s_o, time_limit=limit)[0])
+    samples = torch.stack(samples, dim=1)
     q = torch.quantile(samples, torch.tensor([0.05, 0.95]), dim=0)
     prior_width = 0.9 * (torch.tensor(DW_HIGH) - torch.tensor(DW_LOW))
     fractions = ((q[1] - q[0]) / prior_width).mean(dim=0)
@@ -641,30 +649,36 @@ def posterior_widths(posterior, summary, verbose=True):
     return fractions[0].item(), fractions[1].item()
 
 
-def _sample_quietly(posterior, num_samples, x, time_limit=2.0):
-    """Posterior samples inside the prior box, without warnings or progress bars.
+def _sample_inside_prior(posterior, num_samples, x, time_limit=2.0):
+    """Posterior samples inside the prior box: never hangs, never comes back short.
 
-    sbi rejects samples outside the prior. If almost all of them are outside, that
-    takes forever, so after `time_limit` seconds the remaining samples are drawn
-    without rejection and moved onto the edge of the box.
+    sbi rejects samples outside the prior and keeps drawing until it has enough. If
+    (almost) all of them are outside, that takes forever. So after `time_limit` seconds
+    the missing samples are drawn without rejection and moved onto the edge of the box.
+
+    Returns (samples, number of samples that had to be moved).
     """
     import logging
 
+    box = posterior.prior.base_dist  # BoxUniform: independent uniform distributions
     logging.disable(logging.WARNING)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            samples = posterior.sample(
-                (num_samples,), x=x, show_progress_bars=False,
-                max_sampling_time=time_limit, return_partial_on_timeout=True)
-            if len(samples) < num_samples:
-                extra = posterior.sample((num_samples - len(samples),), x=x,
-                                         show_progress_bars=False, reject_outside_prior=False)
-                extra = torch.clamp(extra, torch.tensor(DW_LOW), torch.tensor(DW_HIGH))
-                samples = torch.cat([samples, extra])
+            try:
+                samples = posterior.sample(
+                    (num_samples,), x=x, show_progress_bars=False,
+                    max_sampling_time=time_limit, return_partial_on_timeout=True)
+            except RuntimeError:  # sbi raises when not a single sample was accepted in time
+                samples = torch.empty(0, box.low.numel())
+            missing = num_samples - len(samples)
+            if missing > 0:
+                extra = posterior.sample((missing,), x=x, show_progress_bars=False,
+                                         reject_outside_prior=False)
+                samples = torch.cat([samples, torch.clamp(extra, box.low, box.high)])
     finally:
         logging.disable(logging.NOTSET)
-    return samples
+    return samples, max(missing, 0)
 
 
 def region_90(samples, truth=None, low=DW_LOW, high=DW_HIGH, level=0.9):
@@ -702,10 +716,14 @@ def check_practice(tries):
     dG_ok = abs(dG - dG_true) <= b["practice_dG_tolerance"]
     D_ok = max(D / D_true, D_true / D) <= b["practice_D_factor"] if D > 0 else False
     in_time = len(tries) <= b["practice_max_tries"]
-    message = (f"try {len(tries)} of at most {b['practice_max_tries']}: "
-               f"ΔG‡ {'within' if dG_ok else 'not within'} {b['practice_dG_tolerance']} k_BT, "
-               f"D {'within' if D_ok else 'not within'} a factor {b['practice_D_factor']}")
-    _report("Part 1 · by hand", dG_ok and D_ok and in_time, message)
+    targets = (f"{b['practice_dG_tolerance']} k_BT for the barrier height and a factor "
+               f"{b['practice_D_factor']} for D")
+    if dG_ok and D_ok:
+        verdict = f"within {targets}" + ("" if in_time else ", but that took more than the allowed tries")
+    else:  # on purpose no word on which of the two is off: look at the trajectories
+        verdict = f"not yet within {targets}"
+    _report("Part 1 · by hand", dG_ok and D_ok and in_time,
+            f"try {len(tries)} of at most {b['practice_max_tries']}: {verdict}")
 
 
 def check_score(score):
@@ -763,61 +781,26 @@ def check_wrong_simulator(pick):
             "that one is from the tilted well" if passed else "that one is from the tutorial model")
 
 
-def check_sparse(score, num_simulations):
-    """Bonus. Back to bronze with 200 simulations."""
+def check_sparse(score_200, score_200_start, score_2000):
+    """Bonus. With 200 simulations: back above bronze, and at least half of the drop won back.
+
+    Args:
+        score_200: your best score with 200 simulations, after your changes.
+        score_200_start: the score of your Part 2 statistics with 200 simulations, unchanged.
+        score_2000: the score of your Part 2 statistics with all 2,000 simulations.
+    """
     b = load_benchmarks()["double_well"]
-    few = int(num_simulations) <= 200
-    passed = few and score > b["score_bronze"]
-    message = (f"score {score:.2f} with {int(num_simulations)} simulations "
-               f"(target > {b['score_bronze']:.2f} with at most 200)")
-    _report("Bonus · sparse training data", passed, message)
-
-
-# Our reference statistics. The solutions notebook derives them step by step.
-def _wells(x, threshold=0.5):
-    """Which well is the particle in? -1 left, +1 right; inside the barrier region, the last one."""
-    side = np.sign(x) * (np.abs(x) > threshold)
-    last = np.where(side != 0, np.arange(x.shape[1])[None], 0)
-    last = np.maximum.accumulate(last, axis=1)
-    state = np.take_along_axis(side, last, axis=1)
-    state[state == 0] = -1  # every trajectory starts in the left well
-    return state
-
-
-def count_hops(x, threshold=0.5):
-    """Number of well-to-well transitions per trajectory, ignoring recrossings at the top."""
-    return (np.diff(_wells(x, threshold), axis=1) != 0).sum(axis=1)
-
-
-def baseline_summary(x):
-    """The two-number baseline: mean and standard deviation of x."""
-    return np.stack([x.mean(axis=1), x.std(axis=1)], axis=1)
-
-
-def static_summary(x):
-    """Four numbers from the histogram of |x|: no time order involved."""
-    a = np.abs(x)
-    return np.stack([
-        (a < 0.5).mean(axis=1),  # barrier occupancy
-        a.mean(axis=1),
-        a.std(axis=1),
-        stats.kurtosis(a, axis=1),
-    ], axis=1)
-
-
-def dynamic_summary(x):
-    """Four numbers that need the time order: displacements at three lags, hop count."""
-    return np.stack([
-        (x[:, 1:] - x[:, :-1]).std(axis=1),
-        (x[:, 10:] - x[:, :-10]).std(axis=1),
-        (x[:, 100:] - x[:, :-100]).std(axis=1),
-        count_hops(x),
-    ], axis=1)
-
-
-def reference_summary(x):
-    """Our eight reference statistics: four static, four dynamic."""
-    return np.concatenate([static_summary(x), dynamic_summary(x)], axis=1)
+    drop = score_2000 - score_200_start
+    if drop <= 0:
+        _report("Bonus · sparse training data", False,
+                "score_200_start is not below score_2000: there is no drop to win back")
+        return
+    recovered = (score_200 - score_200_start) / drop
+    passed = score_200 > b["score_bronze"] and recovered >= 0.5
+    _report("Bonus · sparse training data", passed,
+            f"score {score_200:.2f} with 200 simulations: {recovered:.0%} of the drop from "
+            f"{score_2000:.2f} to {score_200_start:.2f} won back (target: at least 50%, and above "
+            f"bronze, {b['score_bronze']:.2f})")
 
 
 class FallbackPosterior:
@@ -827,14 +810,27 @@ class FallbackPosterior:
         self.posterior, self.summary = posterior, summary
 
     def sample(self, sample_shape=(10_000,), x=None):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return self.posterior.sample(tuple(sample_shape), x=summarize(self.summary, x),
-                                         show_progress_bars=False)
+        """Posterior samples for one raw trajectory x of shape (5000,)."""
+        return _sample_inside_prior(self.posterior, int(np.prod(sample_shape)),
+                                    summarize(self.summary, x), time_limit=10.0)[0]
 
 
 def load_fallback_posterior(name="reference"):
     """Pre-trained on 10,000 simulations: "baseline", "reference" or "static"."""
-    summary = {"baseline": baseline_summary, "reference": reference_summary,
-               "static": static_summary}[name]
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "reference_statistics", REPO_DIR / "reference" / "reference_statistics.py")
+    statistics = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(statistics)  # our reference statistics are kept out of this file
+    summary = getattr(statistics, f"{name}_summary")
     return FallbackPosterior(_load_pickle(f"dw_posterior_{name}.pkl"), summary)
+
+
+def load_reference_training_set():
+    """Fallback: 10,000 simulated trajectories, already reduced to summary statistics.
+
+    Returns a dict with "theta" (10000, 2), "s_baseline" (10000, 2: mean and standard
+    deviation of x) and "s_reference" (10000, 8: our reference statistics).
+    """
+    return _load("dw_reference_training_set.pt")

@@ -31,6 +31,8 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import reference_statistics as rs
 import tutorial_utils as tu
 
 warnings.filterwarnings("ignore")
@@ -101,7 +103,7 @@ def main():
     # ---- benchmark scores, on the training set the students simulate ----------------
     theta, x = student_training_set()
     scores = {}
-    for name, summary in (("baseline", tu.baseline_summary), ("reference", tu.reference_summary)):
+    for name, summary in (("baseline", rs.baseline_summary), ("reference", rs.reference_summary)):
         scores[name] = [tu.train_and_score(summary, theta, x, seed=s, verbose=False)[1]
                         for s in SCORE_SEEDS]
         print(f"{name:9s} statistics, 2,000 simulations: score "
@@ -111,11 +113,12 @@ def main():
         "score_prior": round(float(-np.log(4.0)), 2),
         "score_baseline": round(float(np.mean(scores["baseline"])), 2),
         "score_reference": round(float(np.mean(scores["reference"])), 2),
-        # Retraining the same statistics moves the score by about ±0.04. Bronze beats the
-        # baseline, silver reaches the reference within that noise, gold beats it beyond the noise.
+        # Retraining the same statistics moves the score by about ±0.04, and so does the number
+        # of CPU threads (seed 0: 3.45 on one thread, 3.54 on four). Bronze beats the baseline,
+        # silver reaches the reference within that noise, gold beats its average by more.
         "score_bronze": round(float(np.mean(scores["baseline"])) + 0.1, 2),
         "score_silver": round(float(np.mean(scores["reference"])) - 0.15, 2),
-        "score_gold": round(float(np.mean(scores["reference"])) + 0.08, 2),
+        "score_gold": round(float(np.mean(scores["reference"])) + 0.05, 2),
     })
     with open(tu.DATA_DIR / "benchmarks.json", "w") as f:
         json.dump(benchmarks, f, indent=2)
@@ -127,12 +130,12 @@ def main():
     x_large = tu.simulate_double_well(theta_large, seed=SEED_LARGE)
     torch.save({
         "theta": theta_large,
-        "s_baseline": tu.summarize(tu.baseline_summary, x_large),
-        "s_reference": tu.summarize(tu.reference_summary, x_large),
+        "s_baseline": tu.summarize(rs.baseline_summary, x_large),
+        "s_reference": tu.summarize(rs.reference_summary, x_large),
     }, tu.DATA_DIR / "dw_reference_training_set.pt")
     posteriors = {}
-    for name, summary in (("baseline", tu.baseline_summary), ("reference", tu.reference_summary),
-                          ("static", tu.static_summary)):
+    for name, summary in (("baseline", rs.baseline_summary), ("reference", rs.reference_summary),
+                          ("static", rs.static_summary)):
         posteriors[name], score = tu.train_and_score(summary, theta_large, x_large, verbose=False)
         save_pickle(posteriors[name], f"dw_posterior_{name}.pkl")
         print(f"{name:9s} statistics, 10,000 simulations: score {score:.2f}")
@@ -141,9 +144,9 @@ def main():
     b = benchmarks["double_well"]
     print(f"\nPart 2  bronze > {b['score_bronze']}, silver ≥ {b['score_silver']}, gold > {b['score_gold']}")
 
-    posterior_2k, score_2k = tu.train_and_score(tu.reference_summary, theta, x, verbose=False)
+    posterior_2k, score_2k = tu.train_and_score(rs.reference_summary, theta, x, verbose=False)
     for label, posterior in (("2,000", posterior_2k), ("10,000", posteriors["reference"])):
-        samples = posterior.sample((10_000,), x=tu.summarize(tu.reference_summary, trajectories["blind"]),
+        samples = posterior.sample((10_000,), x=tu.summarize(rs.reference_summary, trajectories["blind"]),
                                    show_progress_bars=False)
         area, inside = tu.region_90(samples, BLIND["theta"])
         print(f"Part 3  reference posterior ({label} simulations) on the blind trajectory: "
@@ -151,9 +154,9 @@ def main():
               f"mean = {samples.mean(0).tolist()}, truth = {BLIND['theta']}")
         assert inside and area < b["blind_area_max"], "choose another blind trajectory"
 
-    posterior_static, _ = tu.train_and_score(tu.static_summary, theta, x, verbose=False)
+    posterior_static, _ = tu.train_and_score(rs.static_summary, theta, x, verbose=False)
     for label, posterior in (("2,000", posterior_static), ("10,000", posteriors["static"])):
-        width_dG, width_logD = tu.posterior_widths(posterior, tu.static_summary, verbose=False)
+        width_dG, width_logD = tu.posterior_widths(posterior, rs.static_summary, verbose=False)
         print(f"Part 4  static posterior ({label} simulations): ΔG‡ width {width_dG:.0%} of the prior's "
               f"(target < {b['static_dG_width_max']:.0%}), log D width {width_logD:.0%} "
               f"(target > {b['static_logD_width_min']:.0%})")
@@ -163,16 +166,16 @@ def main():
     def time_right(x):
         return (x > 0).mean(axis=1)
 
-    p_values = [predictive_p_value(posterior_2k, tu.reference_summary, x_b, time_right)
+    p_values = [predictive_p_value(posterior_2k, rs.reference_summary, x_b, time_right)
                 for x_b in trajectories["bonus"]]
     for b_, x_b, p in zip(BONUS, trajectories["bonus"], p_values):
-        print(f"Bonus   trajectory with tilt {b_['tilt']:+.2f}: {int(tu.count_hops(x_b.numpy()[None])[0])} hops, "
+        print(f"Bonus   trajectory with tilt {b_['tilt']:+.2f}: {int(rs.count_hops(x_b.numpy()[None])[0])} hops, "
               f"{(x_b > 0).float().mean():.0%} of the time in the right well, predictive p = {p:.3f}")
     tilted = int(np.flatnonzero([b_["tilt"] != 0 for b_ in BONUS])[0])
     assert int(np.argmin(p_values)) == tilted and p_values[tilted] < 0.02, "the tilt should stand out"
     assert all(p > 0.1 for i, p in enumerate(p_values) if i != tilted), "the others should look ordinary"
 
-    hops = {name: int(tu.count_hops(trajectories[name].numpy()[None])[0]) for name in ("practice", "blind")}
+    hops = {name: int(rs.count_hops(trajectories[name].numpy()[None])[0]) for name in ("practice", "blind")}
     print(f"\npractice trajectory: {hops['practice']} hops; blind trajectory: {hops['blind']} hops")
 
 
