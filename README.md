@@ -4,8 +4,8 @@ Two notebooks that turn the SBI lecture of [AlgoSB 2026](https://sites.google.co
 
 | | Notebook | What you do | Open |
 | --- | --- | --- | --- |
-| 1 | [SBI from scratch on a 2D toy problem](01_sbi_toy_2d.ipynb) | Run the full SBI workflow where the exact posterior is known, and learn three ways to check a posterior | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/<org>/<repo>/blob/main/01_sbi_toy_2d.ipynb) |
-| 2 | [SBI for time series: Brownian motion in a double well](02_sbi_double_well.ipynb) | Infer a barrier height and a diffusion coefficient from one trajectory, with summary statistics you invent | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/<org>/<repo>/blob/main/02_sbi_double_well.ipynb) |
+| 1 | [SBI from scratch on a 2D toy problem](01_sbi_toy_2d.ipynb) | Run the full SBI workflow where the exact posterior is known, and learn three ways to check a posterior | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/covinolab/sbi_tutorial_algosb2026/blob/main/01_sbi_toy_2d.ipynb) |
+| 2 | [SBI for time series: Brownian motion in a double well](02_sbi_double_well.ipynb) | Infer a barrier height and a diffusion coefficient from one trajectory, with summary statistics you invent | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/covinolab/sbi_tutorial_algosb2026/blob/main/02_sbi_double_well.ipynb) |
 
 Each notebook takes 75 minutes. Every part is a challenge with a check cell that prints ✅ PASS or ❌ NOT YET. How you reach the target is up to you: trial and error, changing the given code, thinking, or asking an LLM for code.
 
@@ -16,8 +16,8 @@ Each notebook takes 75 minutes. Every part is a challenge with a check cell that
 **On your own machine.** You need Python 3.10 or newer.
 
 ```bash
-git clone https://github.com/<org>/<repo>.git
-cd <repo>
+git clone https://github.com/covinolab/sbi_tutorial_algosb2026.git
+cd sbi_tutorial_algosb2026
 pip install sbi==0.27.0 jupyterlab
 jupyter lab
 ```
@@ -72,7 +72,7 @@ The notebook test checks that the student notebooks run from top to bottom with 
 
 **Benchmark targets** are in `data/benchmarks.json`. The scores of Notebook 2 (bronze, silver, gold) are measured and written by `make_reference_double_well.py`; the other targets are set by hand in that file.
 
-**Before the repository goes public**, replace the placeholder `<org>/<repo>` in two places: `GITHUB_REPO` in `reference/build_notebooks.py` (then rebuild the notebooks), and the links in this README.
+**If the repository moves**, change its address in two places: `GITHUB_REPO` in `reference/build_notebooks.py` (then rebuild the notebooks), and the links in this README.
 
 ## Sources
 

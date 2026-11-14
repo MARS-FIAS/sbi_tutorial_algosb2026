@@ -33,8 +33,8 @@ from pathlib import Path
 
 import nbformat
 
-# Fill in once the repository is on GitHub, then rebuild.
-GITHUB_REPO = "<org>/<repo>"
+# The repository on GitHub: the Colab buttons and the setup cells point at it. Rebuild after a change.
+GITHUB_REPO = "covinolab/sbi_tutorial_algosb2026"
 SBI_VERSION = "0.27.0"
 
 ROOT = Path(__file__).resolve().parent.parent
